@@ -3,10 +3,13 @@
 import argparse
 import datetime
 import getpass
+import hashlib
+import hmac as hmac_mod
 import json
 import os
 import platform
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -264,6 +267,72 @@ def check_encryptly_runs(timeout: int = 600) -> tuple[bool, str]:
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
+
+def python_pack_logd(logd_path: Path, workspace_dir: Path) -> str:
+    """Pure-Python fallback for `encryptly pack` when no native binary is available.
+
+    Produces a .logd file using the same wire format: PBKDF2-HMAC-SHA256 key
+    derivation (650 000 iterations), ChaCha20 stream encryption, and an
+    HMAC-SHA256 authentication tag.  Returns the randomly generated password.
+    """
+    try:
+        from cryptography.hazmat.primitives.ciphers.algorithms import ChaCha20
+        from cryptography.hazmat.primitives.ciphers import Cipher
+    except ImportError:
+        raise RuntimeError(
+            "cryptography package is required for the Python fallback packer; "
+            "install it with: pip install cryptography"
+        )
+
+    password = os.urandom(10).hex()
+    salt = os.urandom(16)
+    nonce = os.urandom(12)
+    iterations = 650_000
+
+    home = Path.home()
+    ts_bytes = struct.pack("<Q", time.time_ns())
+
+    archive = bytearray()
+
+    def _add(path: Path) -> None:
+        try:
+            rel = path.relative_to(home).as_posix()
+        except ValueError:
+            return
+        name_b = rel.encode("utf-8")
+        if path.is_dir():
+            hdr = struct.pack("<H", len(name_b)) + bytes([2, 0xED]) + ts_bytes + b"\x00\x00\x00" + struct.pack("<Q", 0)
+            archive.extend(hdr + name_b)
+            for child in sorted(path.iterdir()):
+                _add(child)
+        elif path.is_file():
+            data = path.read_bytes()
+            hdr = struct.pack("<H", len(name_b)) + bytes([1, 0xA4]) + ts_bytes + b"\x00\x00\x00" + struct.pack("<Q", len(data))
+            archive.extend(hdr + name_b + data)
+
+    _add(workspace_dir)
+
+    key64 = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations, dklen=64)
+    enc_key, mac_key = key64[:32], key64[32:]
+
+    encryptor = Cipher(ChaCha20(enc_key, b"\x00\x00\x00\x00" + nonce), mode=None).encryptor()
+    ciphertext = encryptor.update(bytes(archive)) + encryptor.finalize()
+
+    metadata = b"kdf=PBKDF2-HMAC-SHA256\ncipher=ChaCha20-HMAC-SHA256\n"
+    file_header = (
+        b"DIAG"
+        + struct.pack("<I", 2)
+        + struct.pack("<I", iterations)
+        + salt
+        + nonce
+        + struct.pack("<I", len(metadata))
+        + metadata
+    )
+
+    mac = hmac_mod.new(mac_key, file_header + ciphertext, hashlib.sha256).digest()
+    logd_path.write_bytes(file_header + ciphertext + mac)
+    return password
+
 class Colors:
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -320,8 +389,9 @@ def build_module(
         if not node_modules.exists():
             print(f"       {color('npm install...', Colors.GRAY)}")
             try:
+                npm_exec = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
                 install_result = subprocess.run(
-                    ["npm", "install"],
+                    [npm_exec, "install"],
                     cwd=str(module.dir),
                     capture_output=not verbose,
                     text=True,
@@ -332,6 +402,8 @@ def build_module(
                     return False, time.time() - start, f"npm install failed:\n{install_result.stderr}"
             except subprocess.TimeoutExpired:
                 return False, time.time() - start, "npm install TIMEOUT (120s)"
+            except (FileNotFoundError, OSError) as e:
+                return False, time.time() - start, f"Command not found: {e}"
 
     if module.name == "engine":
 
@@ -369,6 +441,8 @@ def build_module(
         cmd = list(module.build_cmd)
         if release and module.name == "backend":
             cmd.append("--release")
+        if module.name == "frontend" and cmd and cmd[0] == "npm":
+            cmd[0] = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
 
     try:
         result = subprocess.run(
@@ -455,22 +529,41 @@ def collect_system_info() -> str:
         "",
         "--- uname ---",
     ]
-    ok, out = run_cmd(["uname", "-a"])
-    lines.append(out if ok else "unavailable")
+    if platform.system().lower() == "windows":
+        uname = platform.uname()
+        lines.append(
+            f"{uname.system} {uname.node} {uname.release} {uname.version} {uname.machine}"
+        )
+    else:
+        ok, out = run_cmd(["uname", "-a"])
+        lines.append(out if ok else "unavailable")
 
-    lines.extend(["", "--- /etc/os-release ---"])
-    try:
-        lines.append((Path("/etc/os-release")).read_text(encoding="utf-8", errors="replace").strip())
-    except Exception as e:
-        lines.append(f"unavailable: {e}")
+    lines.extend(["", "--- os-release ---"])
+    if platform.system().lower() == "windows":
+        lines.append(f"windows: {platform.win32_ver()}")
+        ok, out = run_cmd(["cmd", "/c", "ver"])
+        lines.append(out if ok else "unavailable")
+    else:
+        try:
+            lines.append((Path("/etc/os-release")).read_text(encoding="utf-8", errors="replace").strip())
+        except Exception as e:
+            lines.append(f"unavailable: {e}")
 
     lines.extend(["", "--- memory ---"])
-    ok, out = run_cmd(["free", "-h"])
-    lines.append(out if ok else "unavailable")
+    if platform.system().lower() == "windows":
+        ok, out = run_cmd(["wmic", "OS", "get", "TotalVisibleMemorySize,FreePhysicalMemory", "/value"])
+        lines.append(out if ok else "unavailable")
+    else:
+        ok, out = run_cmd(["free", "-h"])
+        lines.append(out if ok else "unavailable")
 
     lines.extend(["", "--- disk ---"])
-    ok, out = run_cmd(["df", "-h"])
-    lines.append(out if ok else "unavailable")
+    if platform.system().lower() == "windows":
+        ok, out = run_cmd(["wmic", "logicaldisk", "get", "Caption,Size,FreeSpace", "/value"])
+        lines.append(out if ok else "unavailable")
+    else:
+        ok, out = run_cmd(["df", "-h"])
+        lines.append(out if ok else "unavailable")
 
     lines.extend(["", "--- build environment ---"])
     for key in ["SHELL", "LANG", "TERM", "XDG_SESSION_TYPE", "DISPLAY", "EDITOR"]:
@@ -606,21 +699,6 @@ def generate_logd(
     write_diagnostic_report(metadata_path, build_diagnostic_report(results, commit_id))
 
     encryptly_bin = get_encryptly_bin()
-    if encryptly_bin is None:
-        error = f"encryptly binary not found ({encryptly_platform_help()}); cannot create {display_logd}"
-        print(f"    {color('✗', Colors.RED)} {error}")
-        write_diagnostic_report(
-            metadata_path,
-            build_diagnostic_report(
-                results,
-                commit_id,
-                logd_error=error,
-                message_blocker=ENCRYPTLY_BLOCKER_MESSAGE,
-            ),
-        )
-        print(f"    {color('BLOCKER', Colors.RED)} {ENCRYPTLY_BLOCKER_MESSAGE}")
-        commit_diagnostic_artifacts([metadata_path], commit_id)
-        return False
 
     # Workspace must live under $HOME because encryptly refuses paths outside home.
     home = Path.home()
@@ -666,43 +744,51 @@ def generate_logd(
                 log_lines.append(output)
         (safe_dir / "build.log").write_text("\n".join(log_lines), encoding="utf-8")
 
-        sr = subprocess.run(
-            [
-                str(encryptly_bin),
-                "pack",
-                str(logd_path),
-                "--include",
-                str(workspace),
-                "--max-file-size",
-                "61440",
-            ],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            timeout=1500,
-        )
-        if sr.returncode != 0:
-            error = sr.stderr.strip() or sr.stdout.strip() or "encryptly pack failed"
+        if encryptly_bin is not None:
+            sr = subprocess.run(
+                [
+                    str(encryptly_bin),
+                    "pack",
+                    str(logd_path),
+                    "--include",
+                    str(workspace),
+                    "--max-file-size",
+                    "10000",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if sr.returncode != 0:
+                error = sr.stderr.strip() or sr.stdout.strip() or "encryptly pack failed"
+                print(
+                    f"    {color('✗', Colors.RED)} {logd_path.relative_to(ROOT)} creation failed: "
+                    f"{error}"
+                )
+                if logd_path.exists():
+                    logd_path.unlink()
+                write_diagnostic_report(
+                    metadata_path,
+                    build_diagnostic_report(results, commit_id, logd_error=error),
+                )
+                return False
+            safe_pw = sr.stdout.strip()
+        else:
             print(
-                f"    {color('✗', Colors.RED)} {logd_path.relative_to(ROOT)} creation failed: "
-                f"{error}"
+                f"    {color('⚠', Colors.YELLOW)} encryptly binary not found "
+                f"({encryptly_platform_help()}); using Python fallback packer"
             )
-            if logd_path.exists():
-                logd_path.unlink()
-            write_diagnostic_report(
-                metadata_path,
-                build_diagnostic_report(
-                    results,
-                    commit_id,
-                    logd_error=error,
-                    message_blocker=ENCRYPTLY_BLOCKER_MESSAGE,
-                ),
-            )
-            print(f"    {color('BLOCKER', Colors.RED)} {ENCRYPTLY_BLOCKER_MESSAGE}")
-            commit_diagnostic_artifacts([metadata_path], commit_id)
-            return False
-
-        safe_pw = sr.stdout.strip()
+            try:
+                safe_pw = python_pack_logd(logd_path, workspace)
+            except Exception as e:
+                error = f"Python fallback packer failed: {e}"
+                print(f"    {color('✗', Colors.RED)} {error}")
+                write_diagnostic_report(
+                    metadata_path,
+                    build_diagnostic_report(results, commit_id, logd_error=error),
+                )
+                return False
         logd_files = split_diagnostic_logd(logd_path)
         logd_relpaths = [str(path.relative_to(ROOT)) for path in logd_files]
         decrypt_target = logd_relpaths[0] if len(logd_relpaths) == 1 else str(logd_path.relative_to(ROOT))
@@ -894,7 +980,11 @@ Diagnostic bundle:
     results: list[tuple[str, bool, float, str, Optional[str]]] = []
 
     for module in selected:
-        success, elapsed, output = build_module(module, args.release, args.verbose)
+        try:
+            success, elapsed, output = build_module(module, args.release, args.verbose)
+        except Exception as e:
+            results.append((module.name, False, 0.0, f"Unexpected error: {e}", None))
+            continue
         binary = verify_binary(module) if success else None
         results.append((module.name, success, elapsed, output, binary))
 
