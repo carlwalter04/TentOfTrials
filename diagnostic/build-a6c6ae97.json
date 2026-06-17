@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-06-16T21:45:31.739272+00:00",
-  "commit": "9cd70fff",
-  "diagnostic_logd": "diagnostic/build-9cd70fff.logd",
+  "generated_at": "2026-06-17T05:26:29.050704+00:00",
+  "commit": "a6c6ae97",
+  "diagnostic_logd": "diagnostic/build-a6c6ae97.logd",
   "diagnostic_logd_error": null,
   "chunked": false,
   "chunk_size_bytes": null,
-  "password": "f1d99dc928a000c1d291",
-  "decrypt_command": "encryptly unpack diagnostic/build-9cd70fff.logd <outdir> --password f1d99dc928a000c1d291",
+  "password": "b5fbe056a5163529ed32",
+  "decrypt_command": "encryptly unpack diagnostic/build-a6c6ae97.logd <outdir> --password b5fbe056a5163529ed32",
   "total_modules": 10,
   "passed": 3,
   "failed": 7,
@@ -21,9 +21,9 @@
     {
       "name": "frontend",
       "status": "PASS",
-      "elapsed_seconds": 31.031,
+      "elapsed_seconds": 7.67,
       "artifact": "/Users/carl/TentOfTrials/frontend/dist",
-      "output": "> tent-frontend@0.0.0 build\n> tsc -b && vite build\n\nvite v6.4.3 building for production...\ntransforming...\n\u2713 100 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.62 kB \u2502 gzip:  0.34 kB\ndist/assets/state-BkjSKDbY.js     8.91 kB \u2502 gzip:  3.54 kB \u2502 map:    57.15 kB\ndist/assets/vendor-CREcWLHI.js   48.93 kB \u2502 gzip: 17.25 kB \u2502 map:   481.27 kB\ndist/assets/index-CyxcoTyU.js   231.32 kB \u2502 gzip: 72.16 kB \u2502 map: 1,044.42 kB\n\u2713 built in 10.19s"
+      "output": "> tent-frontend@0.0.0 build\n> tsc -b && vite build\n\nvite v6.4.3 building for production...\ntransforming...\n\u2713 100 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.62 kB \u2502 gzip:  0.34 kB\ndist/assets/state-BkjSKDbY.js     8.91 kB \u2502 gzip:  3.54 kB \u2502 map:    57.15 kB\ndist/assets/vendor-CREcWLHI.js   48.93 kB \u2502 gzip: 17.25 kB \u2502 map:   481.27 kB\ndist/assets/index-CyxcoTyU.js   231.32 kB \u2502 gzip: 72.16 kB \u2502 map: 1,044.42 kB\n\u2713 built in 1.88s"
     },
     {
       "name": "market",
@@ -35,7 +35,7 @@
     {
       "name": "frailbox",
       "status": "FAIL",
-      "elapsed_seconds": 1.776,
+      "elapsed_seconds": 1.235,
       "artifact": null,
       "output": "gcc -Wall -Wextra -Wpedantic -std=c2x -O2 -g -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fPIE -Iinclude -MMD -MP -c src/arena.c -o build/src/arena.o\nsrc/arena.c:17:23: error: use of undeclared identifier 'MAP_HUGETLB'\n   17 |         mmap_flags |= MAP_HUGETLB;\n      |                       ^\nsrc/arena.c:179:17: warning: comparison of distinct pointer types ('const void *' and 'char *') [-Wcompare-distinct-pointer-types]\n  179 |             ptr < (char *)region->start + region->size) {\n      |             ~~~ ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n1 warning and 1 error generated.\nmake: *** [build/src/arena.o] Error 1"
     },
@@ -49,14 +49,14 @@
     {
       "name": "compliance",
       "status": "PASS",
-      "elapsed_seconds": 3.588,
+      "elapsed_seconds": 2.927,
       "artifact": "/Users/carl/TentOfTrials/compliance/build",
       "output": ""
     },
     {
       "name": "v2-market-stream",
       "status": "PASS",
-      "elapsed_seconds": 0.52,
+      "elapsed_seconds": 0.302,
       "artifact": null,
       "output": "Syntax OK"
     },
@@ -82,5 +82,5 @@
       "output": "Command not found: [Errno 2] No such file or directory: 'luac'"
     }
   ],
-  "pr_note": "Include the encrypted diagnostic logd artifact(s): diagnostic/build-9cd70fff.logd. The encrypted .logd is the required diagnostic content for PR review; this JSON file is metadata. Maintainers may ask you to remove these diagnostic artifacts before merging."
+  "pr_note": "Include the encrypted diagnostic logd artifact(s): diagnostic/build-a6c6ae97.logd. The encrypted .logd is the required diagnostic content for PR review; this JSON file is metadata. Maintainers may ask you to remove these diagnostic artifacts before merging."
 }
